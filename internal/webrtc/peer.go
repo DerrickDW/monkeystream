@@ -31,7 +31,7 @@ func NewPeer(iceServers []domain.ICEServer, serialNumber string) (*Peer, error) 
 		RTPCodecCapability: pion.RTPCodecCapability{
 			MimeType:    pion.MimeTypeH264,
 			ClockRate:   90000,
-			SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=64001f",
+			SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=64001f",
 		},
 		PayloadType: 121,
 	}
@@ -159,6 +159,9 @@ func (p *Peer) readVideoTrack(track *pion.TrackRemote, w io.Writer) {
 	startCode := []byte{0x00, 0x00, 0x00, 0x01}
 	depack := NewH264Depacketizer()
 
+	nalTypes := make(map[uint8]int)
+	packets := 0
+	nalusOut := 0
 	for {
 		pkt, _, err := track.ReadRTP()
 		if err != nil {
@@ -166,15 +169,40 @@ func (p *Peer) readVideoTrack(track *pion.TrackRemote, w io.Writer) {
 			return
 		}
 
+		packets++
+
+		if len(pkt.Payload) > 0 {
+			t := pkt.Payload[0] & 0x1f
+			nalTypes[t]++
+		}
+
+		if packets%100 == 0 {
+			log.Printf("[webrtc] video RTP: packets=%d nalTypes=%v",
+				packets, nalTypes)
+		}
+
+		// existing Depacketize...
 		nalus := depack.Depacketize(pkt.SequenceNumber, pkt.Payload)
+
 		for _, nalu := range nalus {
 			if len(nalu) == 0 {
 				continue
 			}
+
+			nalusOut++
+
+			log.Printf(
+				"[webrtc] NAL OUT count=%d type=%d size=%d",
+				nalusOut,
+				nalu[0]&0x1f,
+				len(nalu),
+			)
+
 			if _, err := w.Write(startCode); err != nil {
 				log.Printf("[webrtc] video write start code error: %v", err)
 				return
 			}
+
 			if _, err := w.Write(nalu); err != nil {
 				log.Printf("[webrtc] video write nalu error: %v", err)
 				return

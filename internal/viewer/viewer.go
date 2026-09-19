@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"log"
+	"sync"
 
 	"vico_home/native/internal/domain"
 )
@@ -10,9 +11,10 @@ import (
 // Viewer coordinates the signaling and WebRTC flows.
 // It implements domain.Handler.
 type Viewer struct {
-	peer   domain.Peer
-	signal domain.Signaler
-	cancel context.CancelFunc
+	peer      domain.Peer
+	signal    domain.Signaler
+	cancel    context.CancelFunc
+	offerOnce sync.Once
 }
 
 // New creates a Viewer with the given peer and context cancel function.
@@ -36,13 +38,25 @@ func (v *Viewer) OnAuthSuccess() {
 }
 
 func (v *Viewer) OnPeerIn() {
-	log.Printf("[viewer] camera peer in, creating offer")
+	didRun := false
 
-	sdp, err := v.peer.CreateOffer()
-	if err != nil {
-		log.Fatalf("[viewer] create offer: %v", err)
+	v.offerOnce.Do(func() {
+		didRun = true
+
+		log.Printf("[viewer] camera peer in, creating offer")
+
+		sdp, err := v.peer.CreateOffer()
+		if err != nil {
+			log.Printf("[viewer] create offer: %v", err)
+			return
+		}
+
+		v.signal.SendSDPOffer(sdp)
+	})
+
+	if !didRun {
+		log.Printf("[viewer] camera peer in, offer already created, ignoring")
 	}
-	v.signal.SendSDPOffer(sdp)
 }
 
 func (v *Viewer) OnPeerOut() {
